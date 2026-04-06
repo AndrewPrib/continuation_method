@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import sys
 import json
 from PyQt5.QtWidgets import *
@@ -22,7 +20,6 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(15, 15, 15, 15)
         
-        # ==================== БЕЖЕВЫЙ СТИЛЬ ====================
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f5ebd2;
@@ -115,29 +112,24 @@ class MainWindow(QMainWindow):
             }
         """)
         
-        # ==================== ПАРАМЕТРЫ ЗАДАЧИ (КОМПАКТНО) ====================
         params_group = QGroupBox("ПАРАМЕТРЫ КРАЕВОЙ ЗАДАЧИ")
         params_layout = QGridLayout()
         params_layout.setVerticalSpacing(10)
         params_layout.setHorizontalSpacing(15)
         params_layout.setContentsMargins(15, 15, 15, 15)
         
-        # Уравнение
         params_layout.addWidget(QLabel("Уравнение:"), 0, 0)
         self.equation_edit = QLineEdit("y'' + mu*exp(y)")
         params_layout.addWidget(self.equation_edit, 0, 1)
         
-        # Левое ГУ
         params_layout.addWidget(QLabel("Левое ГУ:"), 1, 0)
         self.bc_left_edit = QLineEdit("y(0)=0")
         params_layout.addWidget(self.bc_left_edit, 1, 1)
         
-        # Правое ГУ
         params_layout.addWidget(QLabel("Правое ГУ:"), 2, 0)
         self.bc_right_edit = QLineEdit("y(1)=0")
         params_layout.addWidget(self.bc_right_edit, 2, 1)
         
-        # Параметр μ
         params_layout.addWidget(QLabel("Параметр μ:"), 3, 0)
         self.lam_spin = QDoubleSpinBox()
         self.lam_spin.setRange(0.1, 10.0)
@@ -145,7 +137,6 @@ class MainWindow(QMainWindow):
         self.lam_spin.setSingleStep(0.1)
         params_layout.addWidget(self.lam_spin, 3, 1)
         
-        # Границы
         params_layout.addWidget(QLabel("Границы [a, b]:"), 4, 0)
         bounds_layout = QHBoxLayout()
         self.a_spin = QDoubleSpinBox()
@@ -162,21 +153,18 @@ class MainWindow(QMainWindow):
         bounds_layout.addStretch()
         params_layout.addLayout(bounds_layout, 4, 1)
         
-        # Узлов сетки
         params_layout.addWidget(QLabel("Узлов сетки N:"), 5, 0)
         self.n_nodes_spin = QSpinBox()
         self.n_nodes_spin.setRange(10, 500)
         self.n_nodes_spin.setValue(50)
         params_layout.addWidget(self.n_nodes_spin, 5, 1)
-        
-        # Шагов по t
+
         params_layout.addWidget(QLabel("Шагов по t:"), 6, 0)
         self.n_steps_spin = QSpinBox()
         self.n_steps_spin.setRange(5, 100)
         self.n_steps_spin.setValue(20)
         params_layout.addWidget(self.n_steps_spin, 6, 1)
-        
-        # Точность
+
         params_layout.addWidget(QLabel("Точность:"), 7, 0)
         self.tolerance_spin = QDoubleSpinBox()
         self.tolerance_spin.setRange(1e-8, 1e-3)
@@ -192,8 +180,7 @@ class MainWindow(QMainWindow):
         
         params_group.setLayout(params_layout)
         main_layout.addWidget(params_group)
-        
-        # ==================== КНОПКИ УПРАВЛЕНИЯ ====================
+
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(15)
         
@@ -215,13 +202,11 @@ class MainWindow(QMainWindow):
         btn_layout.addWidget(self.clear_btn)
         btn_layout.addStretch()
         main_layout.addLayout(btn_layout)
-        
-        # ==================== ПРОГРЕСС-БАР ====================
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         main_layout.addWidget(self.progress_bar)
-        
-        # ==================== ГРАФИК ====================
+
         plot_group = QGroupBox("ГРАФИК РЕШЕНИЯ y(x)")
         plot_layout = QVBoxLayout()
         plot_layout.setContentsMargins(10, 10, 10, 10)
@@ -428,8 +413,7 @@ class AuthorWindow(QWidget):
         photo_label.setText("📷\nФОТО")
         photo_label.setWordWrap(True)
         layout.addWidget(photo_label, alignment=Qt.AlignCenter)
-        
-        # Информация об авторе
+
         info_label = QLabel(
             "<html><body style='text-align: center;'>"
             "<h2 style='color:#8b5a2b;'>Прибытков</h2>"
