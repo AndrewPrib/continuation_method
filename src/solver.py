@@ -62,20 +62,29 @@ def _compute_phi(r, f, p, t_star, a, b):
     xa, xb, x_mat_a, x_mat_b, sol_f = res
     phi_val = r(xa, xb)
     ja, jb = _jacobian_r(r, xa, xb)
-    return phi_val, ja @ x_mat_a + jb @ x_mat_b, sol_f
+    return phi_val, ja @ x_mat_a + jb @ x_mat_b, sol_f, xa, xb
 
 def solve_boundary(equations, conditions, p0, t_star, a, b, step_mu, tol, max_iter):
     p = np.array(p0, dtype=float)
     f, r = _parse_f(equations), _parse_r(conditions)
-    residuals, sol_f_last = [], None
+    sol_f_last = None
+    iter_history = []
 
     for i in range(1, max_iter + 1):
         res = _compute_phi(r, f, p, t_star, a, b)
-        if res is None: return {'message': "Ошибка во внутренней задаче Коши.", 'sol_forward': None}
-        phi_val, phi_jac, sol_f_last = res
+        if res is None: return {'message': "Ошибка Коши", 'sol_forward': None}
+        phi_val, phi_jac, sol_f_last, cur_xa, cur_xb = res
         err = np.linalg.norm(phi_val)
-        residuals.append(err)
-        if err < tol: return {'message': f"Сходимость достигнута! Невязка: {err:.2e}", 'sol_forward': sol_f_last}
+        iter_history.append((i, err))
+        
+        if err < tol: 
+            return {
+                'message': f"Успех! Невязка: {err:.2e}", 
+                'sol_forward': sol_f_last,
+                'history': iter_history,
+                'xa': cur_xa,
+                'xb': cur_xb
+            }
         
         def rhs_outer(_mu, p_cur):
             inner = _compute_phi(r, f, p_cur, t_star, a, b)
@@ -83,6 +92,14 @@ def solve_boundary(equations, conditions, p0, t_star, a, b, step_mu, tol, max_it
             return np.linalg.solve(inner[1], -phi_val)
 
         sol_out = solve_ivp(rhs_outer, (0, 1), p, method="RK45", max_step=step_mu)
-        if not sol_out.success: return {'message': "Ошибка внешней задачи (метод продолжения).", 'sol_forward': sol_f_last}
+        if not sol_out.success: 
+            return {'message': "Ошибка метода продолжения", 'sol_forward': sol_f_last}
         p = sol_out.y[:, -1]
-    return {'message': "Итерации исчерпаны.", 'sol_forward': sol_f_last}
+        
+    return {
+        'message': "Итерации исчерпаны", 
+        'sol_forward': sol_f_last,
+        'history': iter_history,
+        'xa': cur_xa,
+        'xb': cur_xb
+    }

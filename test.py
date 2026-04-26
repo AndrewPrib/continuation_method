@@ -1,10 +1,16 @@
 import sys
-import json
 import os
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 
+try:
+    from src.solver import solve_boundary
+except ImportError:
+    pass
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -140,7 +146,7 @@ class MainWindow(QMainWindow):
         top_layout.setSpacing(15)
         top_layout.setContentsMargins(0, 0, 10, 0)
         
-        ode_group = QGroupBox("ОДУ: ẋ = f(t, x)")
+        ode_group = QGroupBox("ОДУ: ẋ = f(t, x)")
         self.ode_group_layout = QVBoxLayout()
         
         ctrl_layout = QHBoxLayout()
@@ -198,7 +204,7 @@ class MainWindow(QMainWindow):
         
         labels = ["Левый конец a:", "Правый конец b:", "Точка t*:", 
                   "Шаг по μ:", "Точность ε:", "Макс. итер.:"]
-        defaults = ["0.0", "1.0", "0.0", "0.01", "1e-6", "100"]
+        defaults = ["0.0", "1.57", "0.0", "0.1", "1e-6", "50"]
         self.param_edits = {}
         
         for i, (text, default) in enumerate(zip(labels, defaults)):
@@ -220,16 +226,11 @@ class MainWindow(QMainWindow):
         
         plot_group = QGroupBox("ГРАФИК РЕШЕНИЯ y(x)")
         plot_layout = QVBoxLayout()
-        self.plot_label = QLabel("Здесь будет отображаться график решения")
-        self.plot_label.setAlignment(Qt.AlignCenter)
-        self.plot_label.setStyleSheet("""
-            background-color: #fffef7; 
-            border: 1px solid #d4a574; 
-            border-radius: 8px; 
-            color: #6b3f1c;
-            font-size: 13px;
-        """)
-        plot_layout.addWidget(self.plot_label)
+        
+        self.figure, self.ax = plt.subplots()
+        self.figure.patch.set_facecolor('#fffef7')
+        self.canvas = FigureCanvas(self.figure)
+        plot_layout.addWidget(self.canvas)
         plot_group.setLayout(plot_layout)
         bottom_layout.addWidget(plot_group, stretch=1)
         
@@ -301,7 +302,7 @@ class MainWindow(QMainWindow):
         
         for i in range(n):
             row_ode = QHBoxLayout()
-            row_ode.addWidget(QLabel(f"ẋ{i+1} ="))
+            row_ode.addWidget(QLabel(f"ẋ{i+1} ="))
             edit_ode = QLineEdit()
             self.ode_edits.append(edit_ode)
             row_ode.addWidget(edit_ode)
@@ -316,7 +317,7 @@ class MainWindow(QMainWindow):
             
             row_init = QHBoxLayout()
             row_init.addWidget(QLabel(f"p{i+1}₀ ="))
-            edit_init = QLineEdit("0.0")
+            edit_init = QLineEdit("0.1")
             self.init_approx_edits.append(edit_init)
             row_init.addWidget(edit_init)
             self.dynamic_init_layout.addLayout(row_init)
@@ -362,7 +363,6 @@ class MainWindow(QMainWindow):
         author_dialog.setStyleSheet("background-color: #faf3e0;")
         
         layout = QVBoxLayout()
-        
         text_label = QLabel(
             "Выполнил: Прибытков Андрей 313 группа.\n"
             "Преподаватель: Сергей Николаевич Аввакумов."
@@ -373,30 +373,23 @@ class MainWindow(QMainWindow):
         
         img_label = QLabel()
         img_path = os.path.join("images", "photo.jpg")
-        
         pixmap = QPixmap(img_path)
         if pixmap.isNull():
-            img_label.setText("Фото не найдено в папки images/")
+            img_label.setText("Фото не найдено в папке images/")
             img_label.setAlignment(Qt.AlignCenter)
         else:
             img_label.setPixmap(pixmap.scaled(300, 350, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             img_label.setAlignment(Qt.AlignCenter)
-            
         layout.addWidget(img_label)
         
         close_btn = QPushButton("Закрыть")
         close_btn.clicked.connect(author_dialog.accept)
         layout.addWidget(close_btn, alignment=Qt.AlignCenter)
-        
         author_dialog.setLayout(layout)
         author_dialog.exec_()
 
     def show_project_info(self):
-        QMessageBox.information(
-            self, 
-            "О проекте", 
-            "Некомерческий образовательный проект для решения данной задачи методом продолжения по параметру."
-        )
+        QMessageBox.information(self, "О проекте", "Некоммерческий проект для решения краевых задач методом продолжения по параметру.")
 
     def createStatusBar(self):
         self.statusbar = QStatusBar()
@@ -404,14 +397,43 @@ class MainWindow(QMainWindow):
         self.statusbar.showMessage(f" Готов. Уравнений в системе: {self.current_n}")
 
     def on_solve_clicked(self):
-        eq1 = self.ode_edits[0].text() if self.ode_edits else "Нет данных"
-        QMessageBox.information(self, "Решение", f"Уравнение 1: {eq1}\n(Интерфейс работает!)")
+        try:
+            equations = [edit.text() for edit in self.ode_edits]
+            conditions = [edit.text() for edit in self.bc_edits]
+            p0 = [float(edit.text()) for edit in self.init_approx_edits]
+            
+            a = float(self.param_edits["Левый конец a:"].text())
+            b = float(self.param_edits["Правый конец b:"].text())
+            t_star = float(self.param_edits["Точка t*:"].text())
+            step_mu = float(self.param_edits["Шаг по μ:"].text())
+            tol = float(self.param_edits["Точность ε:"].text())
+            max_iter = int(self.param_edits["Макс. итер.:"].text())
+
+            result = solve_boundary(equations, conditions, p0, t_star, a, b, step_mu, tol, max_iter)
+            
+            self.statusbar.showMessage(result['message'])
+
+            if result['sol_forward']:
+                self.ax.clear()
+                t_plot = np.linspace(a, b, 200)
+                y_plot = result['sol_forward'].sol(t_plot)
+                for i in range(self.current_n):
+                    self.ax.plot(t_plot, y_plot[i], label=f'x[{i}]')
+                self.ax.legend()
+                self.ax.set_title("Решение краевой задачи")
+                self.ax.grid(True, linestyle='--', alpha=0.7)
+                self.canvas.draw()
+            else:
+                QMessageBox.warning(self, "Ошбка", result['message'])
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при расчете:\n{str(e)}")
 
     def on_load_clicked(self):
-        QMessageBox.information(self, "Инфо", "Функция загрузки заглушена.")
+        QMessageBox.information(self, "Инфо", "Функция загрузки будет.")
 
     def on_save_clicked(self):
-        QMessageBox.information(self, "Инфо", "Функция сохранения заглушена.")
+        QMessageBox.information(self, "Инфо", "Функция сохранения будет .")
 
     def on_clear_clicked(self):
         self.current_n = 2
@@ -422,7 +444,9 @@ class MainWindow(QMainWindow):
             elif "100" in edit.text(): edit.setText("100")
             elif "1.0" in edit.text(): edit.setText("1.0")
             else: edit.setText("0.0")
-        self.statusbar.showMessage(" Очищено")
+        self.ax.clear()
+        self.canvas.draw()
+        self.statusbar.showMessage("Очистено")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
