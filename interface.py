@@ -1,17 +1,33 @@
 import sys
 import os
 import json
+import inspect
+import re
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
-
 try:
-    from src.solver import solve_boundary
+    from boundary_equation import solve_boundary
 except ImportError:
-    pass
+    try:
+        from boundary_equation import solve_boundary
+    except ImportError:
+        solve_boundary = None
+
+def fix_syntax(eq):
+    if not eq:
+        return eq
+    eq = re.sub(r'\bE\b', 'np.e', eq)
+    eq = re.sub(r'\bpi\b', 'np.pi', eq)
+    eq = re.sub(r'\b(sin|cos|tan|exp|log|sqrt)\b', r'np.\1', eq)
+    def replacer(match):
+        prefix = match.group(1)
+        index = int(match.group(2)) - 1
+        return f"{prefix}[{index}]"
+    return re.sub(r'\b(x|xa|xb|p)(\d+)\b', replacer, eq)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -29,7 +45,9 @@ class MainWindow(QMainWindow):
         self.current_n = 2
         
         self.param_keys = ['a', 'b', 't_star', 'step_mu', 'tol', 'max_iter']
-        self.param_defaults = ["0", "0", "0", "0", "0", "0"]
+        self.param_defaults = ["0.0", "7.0", "0.0", "0.05", "1e-6", "100"]
+        
+        self.last_math_result = None
         
         self.setupUI()
         self.createMenuBar()
@@ -70,7 +88,16 @@ class MainWindow(QMainWindow):
                 'success_clear': "Очищено",
                 'success_save': "Задача успешно сохранена",
                 'success_load': "Задача загружена",
-                'table_cols': ["Параметр / Итерация", "Значение / Невязка"]
+                'table_cols': ["Параметр / Итерация", "Значение / Невязка"],
+                'plot_type_traj': "Траектория решения x(t)",
+                'plot_type_phase': "Фазовая плоскость (x1, x2)",
+                'plot_type_param': "Плоскость параметров / μ",
+                'plot_type_iter': "График итераций (Невязка R)",
+                'btn_save_plot': "💾 Сохранить график",
+                'title_traj': "Решение краевой задачи",
+                'title_phase': "Фазовая плоскость",
+                'title_param': "Путь параметров",
+                'title_iter': "Лог итераций"
             },
             'zh': {
                 'title': "参数连续法 — 边值问题求解",
@@ -102,7 +129,16 @@ class MainWindow(QMainWindow):
                 'success_clear': "已清除",
                 'success_save': "任务已成功保存",
                 'success_load': "任务已加载",
-                'table_cols': ["参数 / 迭代", "数值 / 残差"]
+                'table_cols': ["参数 / 迭代", "数值 / 残差"],
+                'plot_type_traj': "解的轨迹 x(t)",
+                'plot_type_phase': "相平面 (x1, x2)",
+                'plot_type_param': "参数平面 / μ",
+                'plot_type_iter': "迭代图 (残差 R)",
+                'btn_save_plot': "💾 保存图形",
+                'title_traj': "边值问题的解",
+                'title_phase': "相平面",
+                'title_param': "参数路径",
+                'title_iter': "迭代日志"
             }
         }
 
@@ -132,12 +168,12 @@ class MainWindow(QMainWindow):
                 color: #8b5a2b;
             }
             QLabel { color: #6b3f1c; font-size: 12px; font-weight: 500; }
-            QLineEdit, QDoubleSpinBox {
+            QLineEdit, QDoubleSpinBox, QComboBox {
                 background-color: #fffef7; border: 1px solid #d4a574;
                 border-radius: 6px; padding: 4px 8px; color: #4a2a0e;
                 font-size: 12px; min-height: 24px;
             }
-            QLineEdit:focus { border: 1px solid #c49a6c; background-color: #ffffff; }
+            QLineEdit:focus, QDoubleSpinBox:focus { border: 1px solid #c49a6c; background-color: #ffffff; }
             QPushButton {
                 background-color: #d4a574; color: white; border: none;
                 border-radius: 8px; padding: 8px 16px; font-size: 12px; font-weight: bold;
@@ -253,6 +289,19 @@ class MainWindow(QMainWindow):
         
         self.plot_group = QGroupBox()
         plot_layout = QVBoxLayout()
+        
+        plot_ctrl_layout = QHBoxLayout()
+        self.plot_type_combo = QComboBox()
+        self.plot_type_combo.currentIndexChanged.connect(self.redraw_current_graph)
+        self.btn_save_plot = QPushButton()
+        self.btn_save_plot.clicked.connect(self.save_plot_image)
+        
+        plot_ctrl_layout.addWidget(self.plot_type_combo)
+        plot_ctrl_layout.addWidget(self.btn_save_plot)
+        plot_ctrl_layout.addStretch()
+        
+        plot_layout.addLayout(plot_ctrl_layout)
+        
         self.figure, self.ax = plt.subplots()
         self.figure.patch.set_facecolor('#fffef7')
         self.canvas = FigureCanvas(self.figure)
@@ -359,6 +408,21 @@ class MainWindow(QMainWindow):
         
         self.results_table.setHorizontalHeaderLabels(t['table_cols'])
         
+        idx = self.plot_type_combo.currentIndex()
+        if idx < 0:
+            idx = 0
+        self.plot_type_combo.blockSignals(True)
+        self.plot_type_combo.clear()
+        self.plot_type_combo.addItems([
+            t['plot_type_traj'],
+            t['plot_type_phase'],
+            t['plot_type_param'],
+            t['plot_type_iter']
+        ])
+        self.plot_type_combo.setCurrentIndex(idx)
+        self.plot_type_combo.blockSignals(False)
+        self.btn_save_plot.setText(t['btn_save_plot'])
+        
         for i, key in enumerate(self.param_keys):
             self.param_label_widgets[key].setText(t['param_labels'][i])
             
@@ -394,9 +458,11 @@ class MainWindow(QMainWindow):
     def update_dimension_texts(self):
         n = self.current_n
         t = self.texts[self.language]
-        vars_str = ", ".join([f"x[{i}]" for i in range(n)])
+        
+        vars_str = ", ".join([f"x{i+1}" for i in range(n)])
         self.ode_vars_label.setText(f"{t['vars_t']} {vars_str}, t")
-        bc_vars = ", ".join([f"xa[{i}]" for i in range(n)]) + ", " + ", ".join([f"xb[{i}]" for i in range(n)])
+        
+        bc_vars = ", ".join([f"xa{i+1}" for i in range(n)]) + ", " + ", ".join([f"xb{i+1}" for i in range(n)])
         self.bc_vars_label.setText(bc_vars)
 
     def update_dimension(self):
@@ -427,7 +493,7 @@ class MainWindow(QMainWindow):
             
             row_init = QHBoxLayout()
             row_init.addWidget(QLabel(f"p{i+1}₀ ="))
-            edit_init = QLineEdit("0")
+            edit_init = QLineEdit("0.0")
             self.init_approx_edits.append(edit_init)
             row_init.addWidget(edit_init)
             self.dynamic_init_layout.addLayout(row_init)
@@ -441,7 +507,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         text_label = QLabel(
             "Выполнил: Прибытков Андрей 313 группа.\n"
-            "Преподаватель: Сергей Николаевич Аввакумов."
+            "Старший преподаватель: Сергей Николаевич Аввакумов."
         )
         text_label.setAlignment(Qt.AlignCenter)
         text_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #6b3f1c;")
@@ -472,12 +538,137 @@ class MainWindow(QMainWindow):
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
 
+    def redraw_current_graph(self):
+        if not self.last_math_result:
+            return
+            
+        t = self.texts[self.language]
+        idx = self.plot_type_combo.currentIndex()
+        res = self.last_math_result
+        
+        try:
+            a = float(self.param_edits['a'].text())
+            b = float(self.param_edits['b'].text())
+        except ValueError:
+            return
+            
+        self.ax.clear()
+        self.ax.set_yscale('linear')
+        
+        if idx == 0:
+            if res.get('sol_forward'):
+                t_plot = np.linspace(a, b, 200)
+                y_plot = res['sol_forward'].sol(t_plot)
+                for i in range(self.current_n):
+                    self.ax.plot(t_plot, y_plot[i], label=f'x{i+1}')
+                self.ax.legend()
+                self.ax.set_title(t['title_traj'])
+                self.ax.grid(True, linestyle='--', alpha=0.7)
+                
+        elif idx == 1:
+            if res.get('sol_forward') and self.current_n >= 2:
+                t_plot = np.linspace(a, b, 200)
+                y_plot = res['sol_forward'].sol(t_plot)
+                self.ax.plot(y_plot[0], y_plot[1], '#1f77b4', linewidth=2, label="Траектория" if self.language == 'ru' else "轨迹")
+                self.ax.plot(y_plot[0][0], y_plot[1][0], 'go', markersize=7, label="Старт (t=a)" if self.language == 'ru' else "起点")
+                self.ax.plot(y_plot[0][-1], y_plot[1][-1], 'ro', markersize=7, label="Финиш (t=b)" if self.language == 'ru' else "终点")
+                self.ax.set_xlabel("x1")
+                self.ax.set_ylabel("x2")
+                self.ax.set_title(t['title_phase'])
+                self.ax.legend()
+                self.ax.grid(True, linestyle='--', alpha=0.7)
+                
+        elif idx == 2:
+            p_hist = res.get('p_history', [])
+            mu_hist = res.get('mu_history', [])
+            if p_hist and mu_hist:
+                p_arr = np.array(p_hist)
+                if p_arr.shape[1] >= 2:
+                    self.ax.plot(p_arr[:, 0], p_arr[:, 1], '#2ca02c', linewidth=2, marker='.', markersize=4, label="Путь параметров" if self.language == 'ru' else "参数路径")
+                    self.ax.plot(p_arr[0, 0], p_arr[0, 1], 'go', label="μ = 0")
+                    self.ax.plot(p_arr[-1, 0], p_arr[-1, 1], 'ro', label="μ = 1")
+                    self.ax.set_xlabel("p1")
+                    self.ax.set_ylabel("p2")
+                else:
+                    self.ax.plot(mu_hist, p_arr[:, 0], '#2ca02c', linewidth=2, marker='.')
+                    self.ax.set_xlabel("μ")
+                    self.ax.set_ylabel("p1")
+                self.ax.set_title(t['title_param'])
+                self.ax.legend()
+                self.ax.grid(True, linestyle='--', alpha=0.7)
+            else:
+                self.ax.text(0.5, 0.5, "Нет данных пути параметров", ha="center", va="center")
+                
+        elif idx == 3:
+            residuals = res.get('residuals', [])
+            if not residuals and 'history' in res:
+                residuals = []
+                for h in res['history']:
+                    if isinstance(h, tuple):
+                        residuals.append(h[1])
+                    elif isinstance(h, str) and "R=" in h:
+                        try:
+                            r_val = float(h.split("R=")[-1].strip())
+                            residuals.append(r_val)
+                        except Exception:
+                            pass
+            if residuals:
+                iters = list(range(1, len(residuals) + 1))
+                self.ax.plot(iters, residuals, '#ff7f0e', linewidth=2, marker='o', markersize=5, label="||R||")
+                self.ax.set_yscale('log')
+                self.ax.set_xlabel("Итерация" if self.language == 'ru' else "迭代")
+                self.ax.set_ylabel("Невязка (log)" if self.language == 'ru' else "残差 (log)")
+                self.ax.set_title(t['title_iter'])
+                self.ax.legend()
+                self.ax.grid(True, linestyle='--', alpha=0.7)
+            else:
+                self.ax.text(0.5, 0.5, "Нет данных лога итераций", ha="center", va="center")
+        
+        self.canvas.draw()
+
+    def save_plot_image(self):
+        t = self.texts[self.language]
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getSaveFileName(self, t['save_action'], "", "PNG Images (*.png);;JPEG Images (*.jpg);;All Files (*)", options=options)
+        
+        if file_name:
+            try:
+                self.figure.savefig(file_name, facecolor=self.figure.get_facecolor(), edgecolor='none', dpi=300)
+                QMessageBox.information(self, t['info'], t['success_save'])
+            except Exception as e:
+                QMessageBox.critical(self, t['err'], str(e))
+
     def on_solve_clicked(self):
         t = self.texts[self.language]
         try:
-            equations = [edit.text() for edit in self.ode_edits]
-            conditions = [edit.text() for edit in self.bc_edits]
-            p0 = [float(edit.text()) for edit in self.init_approx_edits]
+            if solve_boundary is None:
+                raise ImportError("Не найден модуль расчёта.")
+
+            raw_equations = [edit.text().strip() for edit in self.ode_edits]
+            raw_conditions = [edit.text().strip() for edit in self.bc_edits]
+            p0_strs = [edit.text().strip() for edit in self.init_approx_edits]
+
+            while raw_equations and raw_equations[-1] == "" and raw_conditions[-1] == "":
+                raw_equations.pop()
+                raw_conditions.pop()
+                p0_strs.pop()
+
+            if not raw_equations:
+                QMessageBox.critical(self, t['err'], "Введите уравнения.")
+                return
+
+            if any(not eq for eq in raw_equations) or any(not cond for cond in raw_conditions):
+                QMessageBox.critical(self, t['err'], "Увидено пустое поле.")
+                return
+
+            equations = [fix_syntax(eq) for eq in raw_equations]
+            conditions = [fix_syntax(cond) for cond in raw_conditions]
+
+            try:
+                p0 = [float(val) for val in p0_strs]
+            except ValueError:
+                QMessageBox.critical(self, t['err'], "Ошибка формата.")
+                return
             
             a = float(self.param_edits['a'].text())
             b = float(self.param_edits['b'].text())
@@ -486,44 +677,58 @@ class MainWindow(QMainWindow):
             tol = float(self.param_edits['tol'].text())
             max_iter = int(self.param_edits['max_iter'].text())
 
-            result = solve_boundary(equations, conditions, p0, t_star, a, b, step_mu, tol, max_iter)
+            sig = inspect.signature(solve_boundary)
+            if 't_star' in sig.parameters:
+                result = solve_boundary(equations, conditions, p0, t_star, a, b, step_mu, tol, max_iter)
+            else:
+                result = solve_boundary(equations, conditions, p0, a, b, step_mu, tol, max_iter)
+
+            self.last_math_result = result
             
-            self.statusbar.showMessage(result['message'])
+            msg = result.get('message', "Расчет завершен.")
+            self.statusbar.showMessage(msg)
             self.results_table.setRowCount(0)
             
             if 'history' in result:
-                for it, err in result['history']:
-                    row = self.results_table.rowCount()
-                    self.results_table.insertRow(row)
-                    self.results_table.setItem(row, 0, QTableWidgetItem(f"Итерация {it}" if self.language == 'ru' else f"迭代 {it}"))
-                    self.results_table.setItem(row, 1, QTableWidgetItem(f"{err:.4e}"))
-                
-                for i, (va, vb) in enumerate(zip(result.get('xa', []), result.get('xb', []))):
+                for item in result['history']:
+                    if isinstance(item, tuple):
+                        it, err = item
+                        row = self.results_table.rowCount()
+                        self.results_table.insertRow(row)
+                        self.results_table.setItem(row, 0, QTableWidgetItem(f"Итерация {it}" if self.language == 'ru' else f"迭代 {it}"))
+                        self.results_table.setItem(row, 1, QTableWidgetItem(f"{err:.4e}"))
+                    elif isinstance(item, str):
+                        row = self.results_table.rowCount()
+                        self.results_table.insertRow(row)
+                        self.results_table.setItem(row, 0, QTableWidgetItem("Итерация"))
+                        self.results_table.setItem(row, 1, QTableWidgetItem(item))
+            
+            xa_list = []
+            xb_list = []
+            if result.get('sol_forward') is not None:
+                xa_list = result['sol_forward'].y[:, 0]
+                xb_list = result['sol_forward'].y[:, -1]
+            
+            if len(xa_list) == self.current_n and len(xb_list) == self.current_n:
+                for i, (va, vb) in enumerate(zip(xa_list, xb_list)):
                     r = self.results_table.rowCount()
                     self.results_table.insertRow(r)
-                    self.results_table.setItem(r, 0, QTableWidgetItem(f"x[{i}] в a" if self.language == 'ru' else f"x[{i}] 在 a"))
+                    self.results_table.setItem(r, 0, QTableWidgetItem(f"x{i+1} в a" if self.language == 'ru' else f"x{i+1} 在 a"))
                     self.results_table.setItem(r, 1, QTableWidgetItem(f"{va:.4f}"))
                     r = self.results_table.rowCount()
                     self.results_table.insertRow(r)
-                    self.results_table.setItem(r, 0, QTableWidgetItem(f"x[{i}] в b" if self.language == 'ru' else f"x[{i}] 在 b"))
+                    self.results_table.setItem(r, 0, QTableWidgetItem(f"x{i+1} в b" if self.language == 'ru' else f"x{i+1} 在 b"))
                     self.results_table.setItem(r, 1, QTableWidgetItem(f"{vb:.4f}"))
 
-            if result['sol_forward']:
-                self.ax.clear()
-                t_plot = np.linspace(a, b, 200)
-                y_plot = result['sol_forward'].sol(t_plot)
-                for i in range(self.current_n):
-                    self.ax.plot(t_plot, y_plot[i], label=f'x[{i}]')
-                self.ax.legend()
-                title_str = "Решение краевой задачи" if self.language == 'ru' else "边值问题的解"
-                self.ax.set_title(title_str)
-                self.ax.grid(True, linestyle='--', alpha=0.7)
-                self.canvas.draw()
-            else:
-                QMessageBox.warning(self, t['err'], result['message'])
+            if result.get('sol_forward') is None and 'message' in result:
+                pass 
+            
+            self.redraw_current_graph()
 
         except Exception as e:
-            QMessageBox.critical(self, t['err'], f"Ошибка при расчете / 计算错误:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, t['err'], f"Ошибка при расчете:\n{str(e)}")
 
     def on_save_clicked(self):
         t = self.texts[self.language]
@@ -587,3 +792,10 @@ class MainWindow(QMainWindow):
         self.canvas.draw()
         self.results_table.setRowCount(0)
         self.statusbar.showMessage(self.texts[self.language]['success_clear'])
+        self.last_math_result = None
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_())
